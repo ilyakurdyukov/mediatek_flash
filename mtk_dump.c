@@ -531,20 +531,35 @@ int main(int argc, char **argv) {
 			}
 			argc -= 2; argv += 2;
 
+		} else if (!strcmp(argv[1], "reboot")) {
+			uint32_t addr = 0xa003001c;
+			uint32_t chip = info[2];
+
+			if (chip == 0x6260 || chip == 0x6261) {
+				mtk_write32(io, addr, 0x1209);
+			}
+			argc -= 2; argv += 2;
+
 		} else if (!strcmp(argv[1], "jump_bl")) {
 			mtk_echo8(io, CMD_JUMP_BL);
 			mtk_status(io);
 			mtk_status(io);
 			argc -= 1; argv += 1;
 
-		} else if (!strcmp(argv[1], "me_id")) {
-			uint32_t size, status;
+		} else if (!strcmp(argv[1], "get_meid")) {
+			uint32_t i, size, status;
 
 			mtk_echo8(io, CMD_GET_ME_ID);
 			size = mtk_recv32(io);
 			ret = usb_recv(io, size);
 			if (ret != (int)size)
 				ERR_EXIT("unexpected response\n");
+
+			DBG_LOG("MEID: ");
+			for (i = 0; i < size; i++)
+				DBG_LOG("%02x", io->buf[i]);
+			DBG_LOG("\n");
+
 			mtk_status(io);
 			argc -= 1; argv += 1;
 
