@@ -4,6 +4,14 @@
 // sudo modprobe ftdi_sio
 // echo 0e8d 0003 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
 // make && sudo ./mtk_dump [options] commands...
+//
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+// OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+// THE SOFTWARE.
 */
 
 #define _GNU_SOURCE 1
@@ -422,17 +430,23 @@ static void mtk_write32(usbio_t *io, uint32_t addr, uint32_t val) {
 	mtk_status(io);
 }
 
+#define REOPEN_FREQ 2
+
 int main(int argc, char **argv) {
 	int serial; usbio_t *io; int ret, i;
-	int wait = 30 * 2;
+	int wait = 30 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
-	int verbose = 0, fdl_loaded = 0;
+	int verbose = 0;
 	uint32_t info[4] = { -1, -1, -1, -1 };
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "--tty")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
 			tty = argv[2];
+			argc -= 2; argv += 2;
+		} else if (!strcmp(argv[1], "--wait")) {
+			if (argc <= 2) ERR_EXIT("bad option\n");
+			wait = atoi(argv[2]) * 4;
 			argc -= 2; argv += 2;
 		} else if (!strcmp(argv[1], "--verbose")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
@@ -443,14 +457,14 @@ int main(int argc, char **argv) {
 		} else break;
 	}
 
-	for (i = 0; i < wait; i++) {
+	for (i = 0; ; i++) {
 		serial = open(tty, O_RDWR | O_NOCTTY | O_SYNC);
 		if (serial >= 0) break;
-		if (!i) DBG_LOG("Waiting for connection (%ds)\n", wait / 2);
-		usleep(500000);
+		if (i >= wait)
+			ERR_EXIT("open(ttyUSB) failed\n");
+		if (!i) DBG_LOG("Waiting for connection (%ds)\n", wait / REOPEN_FREQ);
+		usleep(1000000 / REOPEN_FREQ);
 	}
-	if (serial < 0)
-		ERR_EXIT("open(ttyUSB) failed\n");
 
 	init_serial(serial);
 	// fcntl(serial, F_SETFL, FNDELAY);

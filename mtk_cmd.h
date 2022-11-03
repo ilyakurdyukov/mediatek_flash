@@ -28,6 +28,7 @@ enum {
 	CMD_GET_TARGET_CONFIG  = 0xd8,
 	CMD_SEND_EPP           = 0xd9, // SEND_ENV_PREPARE
 	CMD_UART1_LOG_EN       = 0xdb,
+	CMD_SET_BAUD           = 0xdc,
 
 	CMD_SEND_CERT          = 0xe0,
 	CMD_GET_ME_ID          = 0xe1,
