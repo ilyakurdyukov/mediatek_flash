@@ -17,9 +17,11 @@ $ sudo ./mtk_dump connect  show_flash 1  read32 0 0x400000 dump.bin
 ```
 
 * Where 0x400000 (4MB) is the expected length of flash in bytes (may be more or less).
+* An example payload is [here](payload) (you can read the BROM with it).
 
 ### Useful links
 
 1. [Fernly - some of the MT6260 reversed](https://github.com/xobs/fernly)
 2. [MTKClient - tools for many MTK chipsets (in Python)](https://github.com/bkerler/mtkclient)
 3. [decompressor for ALICE chunks in the firmware (in Python)](https://github.com/donnm/mtk_fw_tools)
+
