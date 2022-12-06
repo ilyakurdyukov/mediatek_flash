@@ -118,11 +118,11 @@ static void cmd_jump_da(usbio_t *io) {
 
 #define MEM4(addr) *(volatile uint32_t*)(addr)
 
-static inline int comm_check(volatile uint32_t *addr) {
+static inline uint32_t comm_check(volatile uint32_t *addr) {
 	uint32_t a0 = addr[0], a1 = addr[1];
 	// a0 = timer, a1 = usbio
 	if ((a0 >> 16) == 0xfff0)
-	if (a1 - a0 == sizeof(timer_t) && a0 - (uint32_t)addr == sizeof(usbio_t))
+	if (a1 - a0 == sizeof(timer_t) && (uint32_t)addr - a1 == sizeof(usbio_t))
 		return (uint32_t)a1;
 	return 0;
 }
