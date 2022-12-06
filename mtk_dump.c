@@ -21,9 +21,13 @@
 #include <stdint.h>
 #include <string.h>
 
+#if USE_LIBUSB
+#include <libusb-1.0/libusb.h>
+#else
 #include <termios.h>
 #include <fcntl.h>
 #include <poll.h>
+#endif
 #include <unistd.h>
 
 #include "mtk_cmd.h"
@@ -75,31 +79,67 @@ static void print_string(FILE *f, uint8_t *buf, size_t n) {
 
 typedef struct {
 	uint8_t *recv_buf, *buf;
-	int flags, serial, recv_len, recv_pos, nread;
+#if USE_LIBUSB
+	libusb_device_handle *dev_handle;
+	int endp_in, endp_out;
+#else
+	int serial;
+#endif
+	int flags, recv_len, recv_pos, nread;
 	int verbose, timeout;
 } usbio_t;
 
-static usbio_t* usbio_init(int serial, int flags) {
-	uint8_t *p; usbio_t *io;
+#if USE_LIBUSB
+static void find_endpoints(libusb_device_handle *dev_handle, int result[2]) {
+	int endp_in = -1, endp_out = -1;
+	int i, j, k, err;
+	//struct libusb_device_descriptor desc;
+	struct libusb_config_descriptor *config;
+	libusb_device *device = libusb_get_device(dev_handle);
+	if (!device)
+		ERR_EXIT("libusb_get_device failed\n");
+	//if (libusb_get_device_descriptor(device, &desc) < 0)
+	//	ERR_EXIT("libusb_get_device_descriptor failed");
+	if (libusb_get_config_descriptor(device, 0, &config) < 0)
+		ERR_EXIT("libusb_get_config_descriptor failed\n");
 
-	p = (uint8_t*)malloc(sizeof(usbio_t) + RECV_BUF_LEN + TEMP_BUF_LEN);
-	io = (usbio_t*)p; p += sizeof(usbio_t);
-	if (!p) ERR_EXIT("malloc failed\n");
-	io->flags = flags;
-	io->serial = serial;
-	io->recv_len = 0;
-	io->recv_pos = 0;
-	io->recv_buf = p; p += RECV_BUF_LEN;
-	io->buf = p;
-	io->verbose = 0;
-	io->timeout = 1000;
-	return io;
+	for (k = 0; k < config->bNumInterfaces; k++) {
+		const struct libusb_interface *interface;
+		interface = config->interface + k;
+		for (j = 0; j < interface->num_altsetting; j++) {
+			const struct libusb_interface_descriptor *interface_desc;
+			interface_desc = interface->altsetting + j;
+			for (i = 0; i < interface_desc->bNumEndpoints; i++) {
+				const struct libusb_endpoint_descriptor *endpoint;
+				endpoint = interface_desc->endpoint + i;
+				if (endpoint->bmAttributes == 2) {
+					int addr = endpoint->bEndpointAddress;
+					err = 0;
+					if (addr & 0x80) {
+						if (endp_in >= 0) ERR_EXIT("more than one endp_in\n");
+						endp_in = addr;
+						err = libusb_claim_interface(dev_handle, k);
+					} else {
+						if (endp_out >= 0) ERR_EXIT("more than one endp_out\n");
+						endp_out = addr;
+						err = libusb_claim_interface(dev_handle, k);
+					}
+					if (err < 0)
+						ERR_EXIT("libusb_claim_interface failed : %s\n", libusb_error_name(err));
+				}
+			}
+		}
+	}
+	if (endp_in < 0) ERR_EXIT("endp_in not found\n");
+	if (endp_out < 0) ERR_EXIT("endp_out not found\n");
+	libusb_free_config_descriptor(config);
+
+	//DBG_LOG("USB endp_in=%02x, endp_out=%02x\n", endp_in, endp_out);
+
+	result[0] = endp_in;
+	result[1] = endp_out;
 }
-
-static void usbio_free(usbio_t* io) {
-	if (io) free(io);
-}
-
+#else
 static void init_serial(int serial) {
 	struct termios tty = { 0 };
 
@@ -117,6 +157,53 @@ static void init_serial(int serial) {
 
 	tcflush(serial, TCIFLUSH);
 	tcsetattr(serial, TCSANOW, &tty);
+}
+#endif
+
+#if USE_LIBUSB
+static usbio_t* usbio_init(libusb_device_handle *dev_handle, int flags) {
+#else
+static usbio_t* usbio_init(int serial, int flags) {
+#endif
+	uint8_t *p; usbio_t *io;
+
+#if USE_LIBUSB
+	int endpoints[2];
+	find_endpoints(dev_handle, endpoints);
+#else
+	init_serial(serial);
+	// fcntl(serial, F_SETFL, FNDELAY);
+	tcflush(serial, TCIOFLUSH);
+#endif
+
+	p = (uint8_t*)malloc(sizeof(usbio_t) + RECV_BUF_LEN + TEMP_BUF_LEN);
+	io = (usbio_t*)p; p += sizeof(usbio_t);
+	if (!p) ERR_EXIT("malloc failed\n");
+	io->flags = flags;
+#if USE_LIBUSB
+	io->dev_handle = dev_handle;
+	io->endp_in = endpoints[0];
+	io->endp_out = endpoints[1];
+#else
+	io->serial = serial;
+#endif
+	io->recv_len = 0;
+	io->recv_pos = 0;
+	io->recv_buf = p; p += RECV_BUF_LEN;
+	io->buf = p;
+	io->verbose = 0;
+	io->timeout = 1000;
+	return io;
+}
+
+static void usbio_free(usbio_t* io) {
+	if (!io) return;
+#if USE_LIBUSB
+	libusb_close(io->dev_handle);
+#else
+	close(io->serial);
+#endif
+	free(io);
 }
 
 #define WRITE16_BE(p, a) do { \
@@ -158,12 +245,23 @@ static int usb_send(usbio_t *io, const void *data, int len) {
 		print_mem(stderr, buf, len);
 	}
 
-	ret = write(io->serial, data, len);
+#if USE_LIBUSB
+	{
+		int err = libusb_bulk_transfer(io->dev_handle,
+				io->endp_out, (uint8_t*)buf, len, &ret, io->timeout);
+		if (err < 0)
+			ERR_EXIT("usb_send failed : %s\n", libusb_error_name(err));
+	}
+#else
+	ret = write(io->serial, buf, len);
+#endif
 	if (ret != len)
-		ERR_EXIT("write(message) failed\n");
+		ERR_EXIT("usb_send failed (%d / %d)\n", ret, len);
 
+#if !USE_LIBUSB
 	tcdrain(io->serial);
 	// usleep(1000);
+#endif
 	return ret;
 }
 
@@ -177,23 +275,35 @@ static int usb_recv(usbio_t *io, int plen) {
 	pos = io->recv_pos;
 	while (nread < plen) {
 		if (pos >= len) {
+#if USE_LIBUSB
+			int err = libusb_bulk_transfer(io->dev_handle, io->endp_in, io->recv_buf, RECV_BUF_LEN, &len, io->timeout);
+			if (err == LIBUSB_ERROR_NO_DEVICE)
+				ERR_EXIT("connection closed\n");
+			else if (err == LIBUSB_ERROR_TIMEOUT) break;
+			else if (err < 0) {
+				ERR_EXIT("usb_recv failed : %s\n", libusb_error_name(err));
+			}
+#else
 			if (io->timeout >= 0) {
 				struct pollfd fds = { 0 };
 				fds.fd = io->serial;
 				fds.events = POLLIN;
 				a = poll(&fds, 1, io->timeout);
 				if (a < 0) ERR_EXIT("poll failed, ret = %d\n", a);
+				if (fds.revents & POLLHUP)
+					ERR_EXIT("connection closed\n");
 				if (!a) break;
 			}
-			pos = 0;
 			len = read(io->serial, io->recv_buf, RECV_BUF_LEN);
+#endif
 			if (len < 0)
-				ERR_EXIT("read(message) failed, ret = %d\n", len);
+				ERR_EXIT("usb_recv failed, ret = %d\n", len);
 
 			if (io->verbose >= 2) {
 				DBG_LOG("recv (%d):\n", len);
 				print_mem(stderr, io->recv_buf, len);
 			}
+			pos = 0;
 			if (!len) break;
 		}
 		a = io->recv_buf[pos++];
@@ -433,11 +543,22 @@ static void mtk_write32(usbio_t *io, uint32_t addr, uint32_t val) {
 #define REOPEN_FREQ 2
 
 int main(int argc, char **argv) {
-	int serial; usbio_t *io; int ret, i;
+#if USE_LIBUSB
+	libusb_device_handle *device;
+#else
+	int serial;
+#endif
+	usbio_t *io; int ret, i;
 	int wait = 30 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0;
 	uint32_t info[4] = { -1, -1, -1, -1 };
+
+#if USE_LIBUSB
+	ret = libusb_init(NULL);
+	if (ret < 0)
+		ERR_EXIT("libusb_init failed: %s\n", libusb_error_name(ret));
+#endif
 
 	while (argc > 1) {
 		if (!strcmp(argv[1], "--tty")) {
@@ -446,7 +567,7 @@ int main(int argc, char **argv) {
 			argc -= 2; argv += 2;
 		} else if (!strcmp(argv[1], "--wait")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
-			wait = atoi(argv[2]) * 4;
+			wait = atoi(argv[2]) * REOPEN_FREQ;
 			argc -= 2; argv += 2;
 		} else if (!strcmp(argv[1], "--verbose")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
@@ -458,19 +579,26 @@ int main(int argc, char **argv) {
 	}
 
 	for (i = 0; ; i++) {
+#if USE_LIBUSB
+		device = libusb_open_device_with_vid_pid(NULL, 0x0e8d, 0x0003);
+		if (device) break;
+		if (i >= wait)
+			ERR_EXIT("libusb_open_device failed\n");
+#else
 		serial = open(tty, O_RDWR | O_NOCTTY | O_SYNC);
 		if (serial >= 0) break;
 		if (i >= wait)
 			ERR_EXIT("open(ttyUSB) failed\n");
+#endif
 		if (!i) DBG_LOG("Waiting for connection (%ds)\n", wait / REOPEN_FREQ);
 		usleep(1000000 / REOPEN_FREQ);
 	}
 
-	init_serial(serial);
-	// fcntl(serial, F_SETFL, FNDELAY);
-	tcflush(serial, TCIOFLUSH);
-
+#if USE_LIBUSB
+	io = usbio_init(device, 0);
+#else
 	io = usbio_init(serial, 0);
+#endif
 	io->verbose = verbose;
 
 	while (argc > 1) {
@@ -741,6 +869,8 @@ int main(int argc, char **argv) {
 	}
 
 	usbio_free(io);
-	close(serial);
+#if USE_LIBUSB
+	libusb_exit(NULL);
+#endif
 	return 0;
 }
