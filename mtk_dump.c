@@ -559,6 +559,24 @@ static void mtk_write32(usbio_t *io, uint32_t addr, uint32_t val) {
 	mtk_status(io);
 }
 
+static uint64_t str_to_size(const char *str) {
+	char *end; int shl = 0; uint64_t n;
+	n = strtoull(str, &end, 0);
+	if (*end) {
+		if (!strcmp(end, "K")) shl = 10;
+		else if (!strcmp(end, "M")) shl = 20;
+		else if (!strcmp(end, "G")) shl = 30;
+		else ERR_EXIT("unknown size suffix\n");
+	}
+	if (shl) {
+		int64_t tmp = n;
+		tmp >>= 63 - shl;
+		if (tmp && ~tmp)
+			ERR_EXIT("size overflow on multiply\n");
+	}
+	return n << shl;
+}
+
 #define REOPEN_FREQ 2
 
 int main(int argc, char **argv) {
@@ -728,8 +746,8 @@ int main(int argc, char **argv) {
 			const char *fn; uint32_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
-			addr = strtol(argv[2], NULL, 0);
-			size = strtol(argv[3], NULL, 0);
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
 			fn = argv[4];
 			dump_mem(io, addr, size, fn, CMD_READ16);
 			argc -= 4; argv += 4;
@@ -738,8 +756,8 @@ int main(int argc, char **argv) {
 			const char *fn; uint32_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
-			addr = strtol(argv[2], NULL, 0);
-			size = strtol(argv[3], NULL, 0);
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
 			fn = argv[4];
 			dump_mem(io, addr, size, fn, CMD_READ32);
 			argc -= 4; argv += 4;
@@ -748,8 +766,8 @@ int main(int argc, char **argv) {
 			const char *fn; uint32_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
-			addr = strtol(argv[2], NULL, 0);
-			size = strtol(argv[3], NULL, 0);
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
 			fn = argv[4];
 			dump_mem(io, addr, size, fn, CMD_LEGACY_READ);
 			argc -= 4; argv += 4;
@@ -760,7 +778,7 @@ int main(int argc, char **argv) {
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
 			fn = argv[2];
-			addr = strtol(argv[3], NULL, 0);
+			addr = str_to_size(argv[3]);
 			sig_len = strtol(argv[4], NULL, 0);
 
 			mem = loadfile(fn, &size);
@@ -789,9 +807,9 @@ int main(int argc, char **argv) {
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
 			fn = argv[2];
-			addr = strtol(argv[3], NULL, 0);
-			addr2 = strtol(argv[4], NULL, 0);
-			size2 = strtol(argv[5], NULL, 0);
+			addr = str_to_size(argv[3]);
+			addr2 = str_to_size(argv[4]);
+			size2 = str_to_size(argv[5]);
 
 			mem = loadfile(fn, &size);
 			if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
@@ -875,7 +893,7 @@ int main(int argc, char **argv) {
 		} else if (!strcmp(argv[1], "jump_da")) {
 			uint32_t addr;
 			if (argc <= 2) ERR_EXIT("bad command\n");
-			addr = strtol(argv[2], NULL, 0);
+			addr = str_to_size(argv[2]);
 
 			mtk_echo8(io, CMD_JUMP_DA);
 			mtk_echo32(io, addr);

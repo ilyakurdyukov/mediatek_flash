@@ -4,14 +4,28 @@ Currently only for MT6260/MT6261 chipset. You can edit the code to work with oth
 
 * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, USE AT YOUR OWN RISK!
 
-### Instructions
+### Build
 
-1. Initialize the USB serial driver:
+There are two options:
+
+1. Using `libusb` for Linux and Windows (MSYS2):  
+Use `make`, `libusb/libusb-dev` packages must be installed.
+
+* For Windows users - please read how to install a [driver](https://github.com/libusb/libusb/wiki/Windows#driver-installation) for `libusb`.
+
+2. Using the USB serial, **Linux only and doesn't work with smartphones**:  
+Use `make LIBUSB=0`.
+If you're using this mode, you must initialize the USB serial driver before using the tool (every boot):
 ```
 $ sudo modprobe ftdi_sio
 $ echo 0e8d 0003 | sudo tee /sys/bus/usb-serial/drivers/generic/new_id
 ```
-2. Run this command and connect your device to USB:
+
+* On Linux you must run the tool with `sudo`, unless you are using special udev rules (see below).
+
+### Instructions
+
+Run this command and connect your device to USB:
 ```
 $ sudo ./mtk_dump connect  show_flash 1  read32 0 0x400000 dump.bin
 ```
