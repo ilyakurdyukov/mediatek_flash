@@ -559,6 +559,60 @@ static void mtk_write32(usbio_t *io, uint32_t addr, uint32_t val) {
 	mtk_status(io);
 }
 
+static unsigned spd_checksum(const void *src, int len) {
+	uint16_t *s = (uint16_t*)src;
+	uint32_t crc = 0;
+	for (; len >= 2; len -= 2) crc += *s++;
+	crc = (crc >> 16) + (crc & 0xffff);
+	crc += crc >> 16;
+	return ~crc & 0xffff;
+}
+
+static void sfi_cmd(usbio_t *io, int qpi, uint8_t *msg, unsigned mlen, unsigned rlen) {
+	uint16_t *data = (uint16_t*)io->buf;
+	uint8_t *buf = (uint8_t*)io->buf + 4;
+	int rlen2;
+
+	if (mlen + rlen > 256 + 6)
+		ERR_EXIT("unexpected size\n");
+	mtk_echo8(io, 0x55);
+	memmove(buf, msg, mlen);
+	data[0] = mlen | qpi << 15;
+	data[1] = rlen;
+	if (mlen & 1) buf[mlen++] = 0;
+	*(uint16_t*)&buf[mlen] = spd_checksum(data, 4 + mlen);
+	usb_send(io, NULL, 4 + mlen + 2);
+
+	rlen2 = (rlen + 3) & ~1;
+	if (usb_recv(io, rlen2) != rlen2)
+		ERR_EXIT("unexpected response\n");
+	if (spd_checksum(io->buf, rlen2))
+		ERR_EXIT("bad checksum\n");
+}
+
+static inline uint32_t sfi_read_status(usbio_t *io) {
+	uint8_t msg[] = { 0x05 }; // Read Status Register
+	sfi_cmd(io, 0, msg, 1, 1);
+	return io->buf[0];
+}
+
+/* Serial Flash Discoverable Parameter */
+static void sfi_read_sfdp(usbio_t *io, int addr, void *buf, unsigned size) {
+	uint8_t msg[5] = { 0x5a, 0, 0, 0, 0 };
+	uint8_t *dst = (uint8_t*)buf, *end = dst + size;
+	unsigned n;
+
+	while ((n = end - dst)) {
+		if (n > 128) n = 128;
+		msg[1] = addr >> 16;
+		msg[2] = addr >> 8;
+		msg[3] = addr;
+		sfi_cmd(io, 0, msg, 5, n);
+		memcpy(dst, io->buf, n);
+		addr += n; dst += n;
+	}
+}
+
 static uint64_t str_to_size(const char *str) {
 	char *end; int shl = 0; uint64_t n;
 	n = strtoull(str, &end, 0);
@@ -899,6 +953,46 @@ int main(int argc, char **argv) {
 			mtk_echo32(io, addr);
 			mtk_status(io);
 			argc -= 2; argv += 2;
+
+		// the commands below are implemented only in the custom payload
+		} else if (!strcmp(argv[1], "flash_id")) {
+			uint8_t msg[] = { 0x9f };	// Read JEDEC ID
+			unsigned id;
+			sfi_cmd(io, 0, msg, 1, 3);
+			id = io->buf[0] << 16 | io->buf[1] << 8 | io->buf[2];
+			DBG_LOG("sfi: id = 0x%06x\n", id);
+			{
+				int sr2 = -1, sr3 = -1;
+				switch (id >> 16) {
+				case 0xef: /* Winbond */
+					sr3 = 0x15; /* fallthrough */
+				case 0xc8: /* GigaDevice */
+				case 0xf8: /* Fidelix/Dosilicon */
+					sr2 = 0x35; break;
+				}
+				printf("sfi: sr1 = 0x%02x\n", sfi_read_status(io));
+				if (sr2 >= 0) {
+					msg[0] = sr2;
+					sfi_cmd(io, 0, msg, 1, 1);
+					printf("sfi: sr2 = 0x%02x\n", io->buf[0]);
+				}
+				if (sr3 >= 0) {
+					msg[0] = sr3;
+					sfi_cmd(io, 0, msg, 1, 1);
+					printf("sfi: sr3 = 0x%02x\n", io->buf[0]);
+				}
+			}
+			{
+				uint8_t buf[256];
+				sfi_read_sfdp(io, 0, buf, 256);
+				if (!memcmp(buf, "SFDP", 4)) {
+					int i;
+					printf("sfi: SFDP data\n");
+					for (i = 0; i < 256; i++)
+						printf("%02x%s", buf[i], (i + 1) & 15 ? " " : "\n");
+				} else printf("sfi: no SFDP support\n");
+			}
+			argc -= 1; argv += 1;
 
 		} else {
 			ERR_EXIT("unknown command\n");

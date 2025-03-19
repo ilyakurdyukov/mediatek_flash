@@ -118,6 +118,8 @@ static void cmd_jump_da(usbio_t *io) {
 
 #define MEM4(addr) *(volatile uint32_t*)(addr)
 
+#include "sfi.h"
+
 static inline uint32_t comm_check(volatile uint32_t *addr) {
 	uint32_t a0 = addr[0], a1 = addr[1];
 	// a0 = timer, a1 = usbio
@@ -214,6 +216,10 @@ uint32_t entry_main(uint32_t arg0, uint32_t arg1, uint32_t arg2, uint32_t arg3,
 			break;
 		case CMD_SEND_DA:
 			cmd_send_da(io);
+			break;
+
+		case 0x55: // custom command
+			cmd_custom_sfi(io);
 			break;
 		}
 	}
