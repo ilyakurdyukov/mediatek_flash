@@ -13,5 +13,5 @@ all: mtk_dump
 clean:
 	$(RM) mtk_dump
 
-mtk_dump: mtk_dump.c mtk_cmd.h
-	$(CC) -s $(CFLAGS) -o $@ $^ $(LIBS)
+mtk_dump: mtk_dump.c mtk_cmd.h custom_cmd.h
+	$(CC) -s $(CFLAGS) -o $@ $< $(LIBS)

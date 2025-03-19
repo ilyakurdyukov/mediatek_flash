@@ -46,12 +46,12 @@ static void cmd_custom_sfi(usbio_t *io) {
 
 	io->recv_buf(data, 4, 0);
 	mlen = data[0] & 0x7fff; rlen = data[1];
-	if (mlen + rlen == 0) return;
 	if (mlen + rlen > sizeof(data) - 6) for (;;);
 	mlen2 = (mlen + 3) & ~1;
 	io->recv_buf(buf, mlen2, 0);
 	if (spd_checksum(data, 4 + mlen2)) for (;;);
-	sfi_cmd(data[0] >> 15, buf, buf, mlen, rlen);
+	if (mlen + rlen)
+		sfi_cmd(data[0] >> 15, buf, buf, mlen, rlen);
 	if (rlen & 1) buf[rlen++] = 0;
 	*(uint16_t*)&buf[rlen] = spd_checksum(buf, rlen);
 	io->send_buf(buf, rlen + 2, 0);

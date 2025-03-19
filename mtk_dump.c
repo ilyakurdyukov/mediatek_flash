@@ -559,59 +559,7 @@ static void mtk_write32(usbio_t *io, uint32_t addr, uint32_t val) {
 	mtk_status(io);
 }
 
-static unsigned spd_checksum(const void *src, int len) {
-	uint16_t *s = (uint16_t*)src;
-	uint32_t crc = 0;
-	for (; len >= 2; len -= 2) crc += *s++;
-	crc = (crc >> 16) + (crc & 0xffff);
-	crc += crc >> 16;
-	return ~crc & 0xffff;
-}
-
-static void sfi_cmd(usbio_t *io, int qpi, uint8_t *msg, unsigned mlen, unsigned rlen) {
-	uint16_t *data = (uint16_t*)io->buf;
-	uint8_t *buf = (uint8_t*)io->buf + 4;
-	int rlen2;
-
-	if (mlen + rlen > 256 + 6)
-		ERR_EXIT("unexpected size\n");
-	mtk_echo8(io, 0x55);
-	memmove(buf, msg, mlen);
-	data[0] = mlen | qpi << 15;
-	data[1] = rlen;
-	if (mlen & 1) buf[mlen++] = 0;
-	*(uint16_t*)&buf[mlen] = spd_checksum(data, 4 + mlen);
-	usb_send(io, NULL, 4 + mlen + 2);
-
-	rlen2 = (rlen + 3) & ~1;
-	if (usb_recv(io, rlen2) != rlen2)
-		ERR_EXIT("unexpected response\n");
-	if (spd_checksum(io->buf, rlen2))
-		ERR_EXIT("bad checksum\n");
-}
-
-static inline uint32_t sfi_read_status(usbio_t *io) {
-	uint8_t msg[] = { 0x05 }; // Read Status Register
-	sfi_cmd(io, 0, msg, 1, 1);
-	return io->buf[0];
-}
-
-/* Serial Flash Discoverable Parameter */
-static void sfi_read_sfdp(usbio_t *io, int addr, void *buf, unsigned size) {
-	uint8_t msg[5] = { 0x5a, 0, 0, 0, 0 };
-	uint8_t *dst = (uint8_t*)buf, *end = dst + size;
-	unsigned n;
-
-	while ((n = end - dst)) {
-		if (n > 128) n = 128;
-		msg[1] = addr >> 16;
-		msg[2] = addr >> 8;
-		msg[3] = addr;
-		sfi_cmd(io, 0, msg, 5, n);
-		memcpy(dst, io->buf, n);
-		addr += n; dst += n;
-	}
-}
+#include "custom_cmd.h"
 
 static uint64_t str_to_size(const char *str) {
 	char *end; int shl = 0; uint64_t n;
@@ -640,7 +588,7 @@ int main(int argc, char **argv) {
 	int serial;
 #endif
 	usbio_t *io; int ret, i;
-	int wait = 30 * REOPEN_FREQ;
+	int wait = 300 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0;
 	uint32_t info[4] = { -1, -1, -1, -1 };
@@ -993,6 +941,16 @@ int main(int argc, char **argv) {
 				} else printf("sfi: no SFDP support\n");
 			}
 			argc -= 1; argv += 1;
+
+		} else if (!strcmp(argv[1], "flash_read")) {
+			const char *fn; uint32_t addr, size;
+			if (argc <= 4) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
+			fn = argv[4];
+			dump_flash(io, addr, size, fn);
+			argc -= 4; argv += 4;
 
 		} else {
 			ERR_EXIT("unknown command\n");
