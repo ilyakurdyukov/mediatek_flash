@@ -33,6 +33,15 @@ $ sudo ./mtk_dump connect  show_flash 1  read32 0 0x400000 dump.bin
 * Where 0x400000 (4MB) is the expected length of flash in bytes (may be more or less).
 * An example payload is [here](payload) (you can read the BROM with it).
 
+#### Commands
+
+The commands below require the payload binary that comes with the tool.
+
+`flash_id` - info about SPI flash.  
+`read_flash <addr> <size> <output_file>`  
+`erase_flash <addr> <size>` - erases flash in 4K sectors.  
+`write_flash <addr> <output_file> <file_offset> <size>`  
+
 #### Using the tool without sudo
 
 If you create `/etc/udev/rules.d/80-spd-mtk.rules` with these lines:

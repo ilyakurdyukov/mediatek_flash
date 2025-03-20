@@ -16,11 +16,11 @@ static void sfi_cmd(int qpi, uint8_t *msg, uint8_t *ret, int mlen, int rlen) {
 	MEM4(SFI_BASE + 0x10) = mlen;
 	MEM4(SFI_BASE + 0x14) = rlen;
 	{
-		uint32_t val = MEM4(SFI_BASE) | 0x18;
+		uint32_t val = MEM4(SFI_BASE) | 0x1c;
 		if (!qpi) val &= ~0x10;
 		// brom code waits no more than 1ms
 		while (!(MEM4(SFI_BASE + 8) & 0x100));
-		MEM4(SFI_BASE) = val | 0xc;
+		MEM4(SFI_BASE) = val;
 	}
 	while (!(MEM4(SFI_BASE) & 2));
 	while (MEM4(SFI_BASE) & 1);

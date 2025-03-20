@@ -942,15 +942,41 @@ int main(int argc, char **argv) {
 			}
 			argc -= 1; argv += 1;
 
-		} else if (!strcmp(argv[1], "flash_read")) {
-			const char *fn; uint32_t addr, size;
+		} else if (!strcmp(argv[1], "read_flash")) {
+			const char *fn; uint64_t addr, size;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
 			addr = str_to_size(argv[2]);
 			size = str_to_size(argv[3]);
+			if ((addr | size | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
 			fn = argv[4];
 			dump_flash(io, addr, size, fn);
 			argc -= 4; argv += 4;
+
+		} else if (!strcmp(argv[1], "erase_flash")) {
+			uint64_t addr, size;
+			if (argc <= 3) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			size = str_to_size(argv[3]);
+			if ((addr | size | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			erase_flash(io, addr, size);
+			argc -= 3; argv += 3;
+
+		} else if (!strcmp(argv[1], "write_flash")) {
+			const char *fn; uint64_t addr, offset, size;
+			if (argc <= 5) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			fn = argv[3];
+			offset = str_to_size(argv[4]);
+			size = str_to_size(argv[5]);
+			if ((addr | offset | size | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			write_flash(io, fn, offset, size, addr);
+			argc -= 5; argv += 5;
 
 		} else {
 			ERR_EXIT("unknown command\n");
