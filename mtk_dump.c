@@ -559,6 +559,30 @@ static void mtk_write32(usbio_t *io, uint32_t addr, uint32_t val) {
 	mtk_status(io);
 }
 
+static void mtk_send_da(usbio_t *io, const char *fn, uint32_t addr, uint32_t sig_len) {
+	uint32_t chk1, chk2;
+	uint8_t *mem; size_t size = 0;
+
+	mem = loadfile(fn, &size);
+	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
+	if (size >> 32) ERR_EXIT("file too big\n");
+
+	mtk_echo8(io, CMD_SEND_DA);
+	mtk_echo32(io, addr);
+	mtk_echo32(io, size);
+	mtk_echo32(io, sig_len);
+	mtk_status(io);
+
+	chk2 = mtk_checksum(mem, size);
+	mtk_send_long(io, mem, size);
+	chk1 = mtk_recv16(io);
+	free(mem);
+
+	if (chk1 != chk2)
+		ERR_EXIT("bad checksum (recv 0x%04x, calc 0x%04x)\n", chk1, chk2);
+	mtk_status(io);
+}
+
 #include "custom_cmd.h"
 
 static uint64_t str_to_size(const char *str) {
@@ -775,33 +799,29 @@ int main(int argc, char **argv) {
 			argc -= 4; argv += 4;
 
 		} else if (!strcmp(argv[1], "send_da")) {
-			const char *fn; uint32_t addr, sig_len, chk1, chk2;
-			uint8_t *mem; size_t size = 0;
+			const char *fn; uint32_t addr, sig_len;
 			if (argc <= 4) ERR_EXIT("bad command\n");
 
 			fn = argv[2];
 			addr = str_to_size(argv[3]);
 			sig_len = strtol(argv[4], NULL, 0);
 
-			mem = loadfile(fn, &size);
-			if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
-			if (size >> 32) ERR_EXIT("file too big\n");
-
-			mtk_echo8(io, CMD_SEND_DA);
-			mtk_echo32(io, addr);
-			mtk_echo32(io, size);
-			mtk_echo32(io, sig_len);
-			mtk_status(io);
-
-			chk2 = mtk_checksum(mem, size);
-			mtk_send_long(io, mem, size);
-			chk1 = mtk_recv16(io);
-			free(mem);
-
-			if (chk1 != chk2)
-				ERR_EXIT("bad checksum (recv 0x%04x, calc 0x%04x)\n", chk1, chk2);
-			mtk_status(io);
+			mtk_send_da(io, fn, addr, sig_len);
 			argc -= 4; argv += 4;
+
+		// simple_da <fn> <addr> = send_da <fn> <addr> 0 jump_da <addr>
+		} else if (!strcmp(argv[1], "simple_da")) {
+			const char *fn; uint32_t addr;
+			if (argc <= 3) ERR_EXIT("bad command\n");
+			fn = argv[2];
+			addr = str_to_size(argv[3]);
+
+			mtk_send_da(io, fn, addr, 0);
+
+			mtk_echo8(io, CMD_JUMP_DA);
+			mtk_echo32(io, addr);
+			mtk_status(io);
+			argc -= 3; argv += 3;
 
 		} else if (!strcmp(argv[1], "send_epp")) {
 			const char *fn; uint32_t addr, addr2, size2, chk1, chk2;
@@ -970,9 +990,9 @@ int main(int argc, char **argv) {
 			if (argc <= 5) ERR_EXIT("bad command\n");
 
 			addr = str_to_size(argv[2]);
-			fn = argv[3];
-			offset = str_to_size(argv[4]);
-			size = str_to_size(argv[5]);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
+			fn = argv[5];
 			if ((addr | offset | size | (addr + size)) >> 32)
 				ERR_EXIT("32-bit limit reached\n");
 			write_flash(io, fn, offset, size, addr);

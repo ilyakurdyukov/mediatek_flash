@@ -35,12 +35,28 @@ $ sudo ./mtk_dump connect  show_flash 1  read32 0 0x400000 dump.bin
 
 #### Commands
 
-The commands below require the payload binary that comes with the tool.
+Basic commands supported by the chip's boot ROM (BROM):
+
+`bl_ver` - print bootloader version.  
+`connect` - try to connect to the phone.  
+`show_flash [0|1]` - maps SPI flash to memory at address 0.  
+`reboot` - reboot the device.  
+`get_meid` - print serial number.  
+`read16 <addr> <size> <output_file>` - read memory in 16-bits chunks.  
+`read32 <addr> <size> <output_file>` - read memory in 32-bits chunks.  
+`legacy_read <addr> <size> <output_file>` - read memory in 16-bits chunks (legacy command).  
+`send_da <file> <addr> <sig_len>`  
+`jump_da <addr>` - execute code at the specified address.  
+`simple_da <file> <addr>` - equivalent to `send_da <file> <addr> 0 jump_da <addr>`  
+
+The commands below require loading the payload binary that comes with the tool (using the command `simple_da payload.bin 0x70008000`).
+
+* The payload binary supports only a subset of the commands listed above.
 
 `flash_id` - info about SPI flash.  
 `read_flash <addr> <size> <output_file>`  
 `erase_flash <addr> <size>` - erases flash in 4K sectors.  
-`write_flash <addr> <output_file> <file_offset> <size>`  
+`write_flash <addr> <file_offset> <size> <input_file>` - zero size means until the end of the file.  
 
 #### Using the tool without sudo
 
@@ -54,14 +70,6 @@ SUBSYSTEMS=="usb", ATTRS{idVendor}=="0e8d", ATTRS{idProduct}=="0003", MODE="0666
 ...then you can run `mtk_dump` without root privileges.
 
 * As you can see this file for both Spreadtrum and MediaTek chipsets.
-
-#### Using libusb to connect
-
-You can build the tool with `libusb` method: `make LIBUSB=1`
-
-For Linux users, this method doesn't require the `ftdi_sio` kernel module, but `libusb/libusb-dev` packages must be installed.
-
-For Windows users, this method is the only one available, should also require drivers (the same as needed for flashing tools).
 
 ### Useful links
 
