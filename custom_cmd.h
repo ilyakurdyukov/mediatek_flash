@@ -173,6 +173,7 @@ static void erase_flash(usbio_t *io,
 		sfi_erase(io, addr, erase_cmd, 3);
 }
 
+// Check if erase is required (0 to 1 bits found).
 static int flash_cmp(const uint8_t *s, const uint8_t *d, unsigned n) {
 	unsigned i;
 	for (i = 0; i < n; i++)

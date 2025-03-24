@@ -45,9 +45,10 @@ Basic commands supported by the chip's boot ROM (BROM):
 `read16 <addr> <size> <output_file>` - read memory in 16-bits chunks.  
 `read32 <addr> <size> <output_file>` - read memory in 32-bits chunks.  
 `legacy_read <addr> <size> <output_file>` - read memory in 16-bits chunks (legacy command).  
-`send_da <file> <addr> <sig_len>`  
+`send_da <file> <addr> <sig_len>` - load DA (Download Agent) at the specified memory address.  
+`auto_da <file>` - parse DA headers, then load and execute DA.  
 `jump_da <addr>` - execute code at the specified address.  
-`simple_da <file> <addr>` - equivalent to `send_da <file> <addr> 0 jump_da <addr>`  
+`simple_da <file> <addr>` - equivalent to `send_da <file> <addr> 0 jump_da <addr>`.  
 
 The commands below require loading the payload binary that comes with the tool (using the command `simple_da payload.bin 0x70008000`).
 
