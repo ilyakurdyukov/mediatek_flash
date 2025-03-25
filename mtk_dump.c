@@ -930,6 +930,16 @@ int main(int argc, char **argv) {
 			id = io->buf[0] << 16 | io->buf[1] << 8 | io->buf[2];
 			DBG_LOG("sfi: id = 0x%06x\n", id);
 			{
+				unsigned a = io->buf[2] - 10, b = a + 3;
+				if (a <= 29 - 10) {
+					int u1 = 'K', u2 = u1;
+					if (b >= 10) b -= 10, u2 = 'M';
+					if (a >= 10) a -= 10, u1 = 'M';
+					DBG_LOG("guess: flash size = %u%cB (%u%cbit)\n",
+							1 << a, u1, 1 << b, u2);
+				}
+			}
+			{
 				int sr2 = -1, sr3 = -1;
 				switch (id >> 16) {
 				case 0xef: /* Winbond */
@@ -954,7 +964,17 @@ int main(int argc, char **argv) {
 				uint8_t buf[256];
 				sfi_read_sfdp(io, 0, buf, 256);
 				if (!memcmp(buf, "SFDP", 4)) {
-					int i;
+					unsigned i = buf[12] | buf[13] << 8 | buf[14] << 16;
+					if (i - 0x18 <= sizeof(buf) - 0x20) {
+						uint32_t x = READ32_LE(buf + i + 4);
+						int u1 = 'K', u2 = u1;
+						if (!(~x & 0x1fff)) {
+							uint32_t b = (x >> 10) + 1, a = b >> 3;
+							if (!(b & 0x3ff)) b >>= 10, u2 = 'M';
+							if (!(a & 0x3ff)) a >>= 10, u1 = 'M';
+							printf("sfi: SFDP density = %u%cB (%u%cbit)\n", a, u1, b, u2);
+						}
+					}
 					printf("sfi: SFDP data\n");
 					for (i = 0; i < 256; i++)
 						printf("%02x%s", buf[i], (i + 1) & 15 ? " " : "\n");
