@@ -53,6 +53,7 @@ static void print_mem(FILE *f, const uint8_t *buf, size_t len) {
 	}
 }
 
+__attribute__((unused))
 static void print_string(FILE *f, uint8_t *buf, size_t n) {
 	size_t i; int a, b = 0;
 	fprintf(f, "\"");
@@ -238,6 +239,20 @@ static void usbio_free(usbio_t* io) {
 	((uint8_t*)(p))[3] = (uint8_t)(a); \
 } while (0)
 
+#define WRITE16_LE(p, a) do { \
+	((uint8_t*)(p))[0] = (uint8_t)(a); \
+	((uint8_t*)(p))[1] = (a) >> 8; \
+} while (0)
+
+#define WRITE32_LE(p, a) do { \
+	uint8_t *_p = (p); \
+	uint32_t _t = (a); \
+	_p[0] = _t; \
+	_p[1] = _t >> 8; \
+	_p[2] = _t >> 16; \
+	_p[3] = _t >> 24; \
+} while (0)
+
 #define READ16_BE(p) ( \
 	((uint8_t*)(p))[0] << 8 | \
 	((uint8_t*)(p))[1])
@@ -247,6 +262,10 @@ static void usbio_free(usbio_t* io) {
 	((uint8_t*)(p))[1] << 16 | \
 	((uint8_t*)(p))[2] << 8 | \
 	((uint8_t*)(p))[3])
+
+#define READ16_LE(p) ( \
+	((uint8_t*)(p))[1] << 8 | \
+	((uint8_t*)(p))[0])
 
 #define READ32_LE(p) ( \
 	((uint8_t*)(p))[3] << 24 | \
@@ -286,7 +305,6 @@ static int usb_send(usbio_t *io, const void *data, int len) {
 }
 
 static int usb_recv(usbio_t *io, int plen) {
-	uint8_t *buf = io->buf;
 	int a, pos, len, nread = 0;
 	if (plen > TEMP_BUF_LEN)
 		ERR_EXIT("target length too long\n");
@@ -361,18 +379,12 @@ static void mtk_echo32(usbio_t *io, uint32_t value) {
 	mtk_echo(io, buf, sizeof(buf));
 }
 
-static void mtk_recv(usbio_t *io, uint32_t value) {
-	const uint8_t buf[4];
-	WRITE32_BE(buf, value);
-	mtk_echo(io, buf, sizeof(buf));
-}
-
 static uint32_t mtk_status(usbio_t *io) {
 	unsigned status;
 	if (usb_recv(io, 2) != 2)
 		ERR_EXIT("unexpected response\n");
 	status = READ16_BE(io->buf);
-	if (status >= 0x100)
+	if (status >= 0xff)
 		ERR_EXIT("unexpected status = %d (0x%04x)\n", status, status);
 	else if (status && io->verbose >= 2)
 		DBG_LOG("status = %d (0x%04x)\n", status, status);
@@ -419,7 +431,7 @@ static int mtk_handshake(usbio_t *io) {
 static unsigned dump_mem(usbio_t *io,
 		uint32_t start, uint32_t len, const char *fn, int cmd) {
 	uint32_t i, n, off, nread, step = 1024;
-	int ret, legacy = cmd == CMD_LEGACY_READ;
+	int legacy = cmd == CMD_LEGACY_READ;
 	int align = cmd == CMD_READ32 ? 2 : 1;
 	FILE *fo;
 
@@ -459,10 +471,7 @@ static unsigned dump_mem(usbio_t *io,
 		else if (align == 2)
 			for (i = 0; i < nread; i += 4) {
 				uint32_t a = READ32_BE(io->buf + i);
-				io->buf[i + 0] = a & 0xff;
-				io->buf[i + 1] = a >> 8;
-				io->buf[i + 2] = a >> 16;
-				io->buf[i + 3] = a >> 24;
+				WRITE32_LE(io->buf + i, a);
 			}
 
 		if (fwrite(io->buf, 1, nread, fo) != nread) 
@@ -519,6 +528,7 @@ static uint32_t mtk_checksum(const uint8_t *buf, uint32_t size) {
 	return chk;
 }
 
+__attribute__((unused))
 static uint32_t mtk_read16(usbio_t *io, uint32_t addr) {
 	uint32_t val;
 	mtk_echo8(io, CMD_READ16);
@@ -583,6 +593,67 @@ static void mtk_send_da(usbio_t *io, const char *fn, uint32_t addr, uint32_t sig
 	mtk_status(io);
 }
 
+static void send_buf(usbio_t *io,
+		uint32_t start, uint8_t *mem, unsigned len, int cmd) {
+	uint32_t i, n, off, step = 1024;
+	int ret, legacy = cmd == CMD_LEGACY_WRITE;
+	int echo = cmd != CMD_WRITE16_NO_ECHO;
+	int align = cmd == CMD_WRITE32 ? 2 : 1;
+	int status = 0;
+
+	if ((len | start) & ((1 << align) - 1))
+		ERR_EXIT("unaligned write\n");
+
+	for (off = 0; off < len; off += len) {
+		n = len - off;
+		if (n > step) n = step;
+
+		mtk_echo8(io, cmd);
+		mtk_echo32(io, start + off);
+		mtk_echo32(io, n >> align);
+
+		if (!legacy) {
+			ret = mtk_status(io);
+			status |= ret != 1;
+		}
+
+		if (align == 1)
+			for (i = 0; i < n; i += 2, mem += 2) {
+				if (!echo) {
+					uint8_t buf[] = { mem[1], mem[0] };
+					usb_send(io, buf, 2);
+				} else mtk_echo16(io, READ16_LE(mem));
+			}
+		else if (align == 2)
+			for (i = 0; i < n; i += 4, mem += 4)
+				mtk_echo32(io, READ32_LE(mem));
+
+		if (!legacy) {
+			ret = mtk_status(io);
+			status |= ret != 1;
+		}
+	}
+	if (status) DBG_LOG("warning: odd bytes are zeroed by BROM\n");
+}
+
+static void send_file(usbio_t *io, const char *fn,
+		uint32_t start_addr, unsigned src_offs, unsigned src_size, int cmd) {
+	uint8_t *mem; size_t size = 0;
+	mem = loadfile(fn, &size);
+	if (!mem) ERR_EXIT("loadfile(\"%s\") failed\n", fn);
+	if (size >> 32) ERR_EXIT("file too big\n");
+	if (size < src_offs)
+		ERR_EXIT("data outside the file\n");
+	size -= src_offs;
+	if (src_size) {
+		if (size < src_size)
+			ERR_EXIT("data outside the file\n");
+		size = src_size;
+	}
+	send_buf(io, start_addr, mem + src_offs, size, cmd);
+	free(mem);
+}
+
 #include "custom_cmd.h"
 
 static uint64_t str_to_size(const char *str) {
@@ -615,16 +686,26 @@ int main(int argc, char **argv) {
 	int wait = 300 * REOPEN_FREQ;
 	const char *tty = "/dev/ttyUSB0";
 	int verbose = 0;
+	int id_vendor = 0x0e8d, id_product = 0x0003;
 	uint32_t info[4] = { -1, -1, -1, -1 };
 
 #if USE_LIBUSB
+	(void)tty;
 	ret = libusb_init(NULL);
 	if (ret < 0)
 		ERR_EXIT("libusb_init failed: %s\n", libusb_error_name(ret));
 #endif
 
 	while (argc > 1) {
-		if (!strcmp(argv[1], "--tty")) {
+		if (!strcmp(argv[1], "--id")) {
+			if (argc <= 2) ERR_EXIT("bad option\n");
+			char *end;
+			id_vendor = strtol(argv[2], &end, 16);
+			if (end != argv[2] + 4 || !*end) ERR_EXIT("bad option\n");
+			id_product = strtol(argv[2] + 5, &end, 16);
+			if (end != argv[2] + 9) ERR_EXIT("bad option\n");
+			argc -= 2; argv += 2;
+		} else if (!strcmp(argv[1], "--tty")) {
 			if (argc <= 2) ERR_EXIT("bad option\n");
 			tty = argv[2];
 			argc -= 2; argv += 2;
@@ -643,11 +724,12 @@ int main(int argc, char **argv) {
 
 	for (i = 0; ; i++) {
 #if USE_LIBUSB
-		device = libusb_open_device_with_vid_pid(NULL, 0x0e8d, 0x0003);
+		device = libusb_open_device_with_vid_pid(NULL, id_vendor, id_product);
 		if (device) break;
 		if (i >= wait)
 			ERR_EXIT("libusb_open_device failed\n");
 #else
+		(void)id_vendor; (void)id_product;
 		serial = open(tty, O_RDWR | O_NOCTTY | O_SYNC);
 		if (serial >= 0) break;
 		if (i >= wait)
@@ -752,7 +834,7 @@ int main(int argc, char **argv) {
 			argc -= 1; argv += 1;
 
 		} else if (!strcmp(argv[1], "get_meid")) {
-			uint32_t i, size, status;
+			uint32_t i, size;
 
 			mtk_echo8(io, CMD_GET_ME_ID);
 			size = mtk_recv32(io);
@@ -797,6 +879,73 @@ int main(int argc, char **argv) {
 			fn = argv[4];
 			dump_mem(io, addr, size, fn, CMD_LEGACY_READ);
 			argc -= 4; argv += 4;
+
+		} else if (!strcmp(argv[1], "write16")) {
+			const char *fn; uint64_t addr, offset, size;
+			if (argc <= 5) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
+			fn = argv[5];
+			if ((addr | size | offset | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			send_file(io, fn, addr, offset, size, CMD_WRITE16);
+			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "write16_noecho")) {
+			const char *fn; uint64_t addr, offset, size;
+			if (argc <= 5) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
+			fn = argv[5];
+			if ((addr | size | offset | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			send_file(io, fn, addr, offset, size, CMD_WRITE16_NO_ECHO);
+			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "write32")) {
+			const char *fn; uint64_t addr, offset, size;
+			if (argc <= 5) ERR_EXIT("bad command\n");
+
+			addr = str_to_size(argv[2]);
+			offset = str_to_size(argv[3]);
+			size = str_to_size(argv[4]);
+			fn = argv[5];
+			if ((addr | size | offset | (addr + size)) >> 32)
+				ERR_EXIT("32-bit limit reached\n");
+			send_file(io, fn, addr, offset, size, CMD_WRITE32);
+			argc -= 5; argv += 5;
+
+		} else if (!strcmp(argv[1], "unlock2120")) {
+#if !USE_LIBUSB
+			ERR_EXIT("libusb build required\n");
+#else
+			uint8_t buf[64] = { 0 };
+			uint32_t chip = info[2], addr = 0xfff0c800 - 8;
+
+			if ((chip ^ 0x6260) >> 1)
+				ERR_EXIT("unsupported chip\n");
+			if (chip & 1) addr -= 0x4000; // smaller BROM
+
+			ret = libusb_control_transfer(io->dev_handle,
+				0xa1, 0x21, 0, 1, buf, 8, 1000);
+			if (ret != 7) {
+				DBG_LOG("ctrl_a121 = %d\n", ret);
+				ERR_EXIT("unexpected response\n");
+			}
+			WRITE32_LE(buf + 0x30, addr - 0x40);
+
+			ret = libusb_control_transfer(io->dev_handle,
+				0x21, 0x20, 0, 1, buf, 64, 1000);
+			if (ret != 64) {
+				DBG_LOG("ctrl_2120 = %d\n", ret);
+				ERR_EXIT("unexpected response\n");
+			}
+			argc -= 1; argv += 1;
+#endif
 
 		} else if (!strcmp(argv[1], "send_da")) {
 			const char *fn; uint32_t addr, sig_len;

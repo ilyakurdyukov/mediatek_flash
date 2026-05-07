@@ -10,6 +10,7 @@ SECTIONS {
 		*(.text._start) *(.text .text.*)
 		*(.rodata .rodata.* .gnu.linkonce.r.*)
 		*(.data .data.* .gnu.linkonce.d.*)
+		. = ALIGN(4);
 	}
 	.bss : {
 		*(.bss .bss.* .gnu.linkonce.b.*)
